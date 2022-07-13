@@ -11,6 +11,12 @@ from urllib.parse import urljoin
 import pandas as pd
 import fileinput
 import logging
+import fasttext 
+import numpy as np
+import nltk
+nltk.download('punkt')
+nltk.download('stopwords')
+stemmer = nltk.stem.PorterStemmer()
 
 
 logger = logging.getLogger(__name__)
@@ -49,9 +55,11 @@ def create_prior_queries(doc_ids, doc_id_weights,
 
 
 # Hardcoded query here.  Better to use search templates or other query config.
-def create_query(user_query, click_prior_query, filters, sort="_score", sortDir="desc", size=10, source=None, synonyms=False):
+def create_query(user_query, click_prior_query, filters, sort="_score", sortDir="desc", size=10, source=None, synonyms=False, categories=[]):
     name_field = "name" if not synonyms else "name.synonyms"
 
+    print("Predicted cats: %s" % categories)
+    filters.append({"terms": {"categoryLeaf": categories}})
     query_obj = {
         'size': size,
         "sort": [
@@ -114,7 +122,7 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
                             }
                         ],
                         "minimum_should_match": 1,
-                        "filter": filters  #
+                        "filter": filters
                     }
                 },
                 "boost_mode": "multiply",  # how _score and functions are combined
@@ -187,9 +195,22 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
         query_obj["_source"] = source
     return query_obj
 
+def clean_text(text):
+    tokens = nltk.word_tokenize(text)
+    # Remove the punctuations
+    tokens = [word for word in tokens if word.isalpha()]
+    # Lower the tokens
+    tokens = [word.lower() for word in tokens]
+    # Remove stopwords
+    tokens = [word for word in tokens if not word in nltk.corpus.stopwords.words("english")]
+    # Stem
+    tokens = [stemmer.stem(word) for word in tokens]
+    processed_text = " ".join(tokens)
+    return processed_text
 
-def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", synonyms=False):
-    query_obj = create_query(user_query, click_prior_query=None, filters=None, sort=sort, sortDir=sortDir, source=["name", "shortDescription"], synonyms=synonyms)
+def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", synonyms=False, categories=[]):
+    query_obj = create_query(user_query, click_prior_query=None, filters=[], sort=sort, sortDir=sortDir, 
+                             source=["name", "shortDescription"], synonyms=synonyms, categories=categories)
     logging.info(query_obj)
     response = client.search(query_obj, index=index)
     if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
@@ -242,12 +263,29 @@ if __name__ == "__main__":
     )
     index_name = args.index
 
+    model = fasttext.load_model("/workspace/search_with_machine_learning_course/model_query.bin")
+    CAT_THRESH = 0.5
 
     query_prompt = "\nEnter your query (type 'Exit' to exit or hit ctrl-c):"
     while True:
         query = input(query_prompt)
         #### W3: classify the query
-        search(client=opensearch, user_query=query, index=index_name, synonyms=args.synonyms)
+
+        # normalize the query
+        query = clean_text(query)
+
+        # get categories predicted by the model adding a probability of CAT_THRESH
+        cats, probas = model.predict(query, 10)
+        probas_cumsum = np.cumsum(probas)
+        i= -1
+        cumsum = 0
+        while cumsum < CAT_THRESH:
+            i += 1
+            cumsum += probas_cumsum[i]
+        cats = cats[:(i + 1)]
+        cats = list((cat.replace("__label__", "") for cat in cats))
+        
+        search(client=opensearch, user_query=query, index=index_name, synonyms=args.synonyms, categories=cats)
 
 
     

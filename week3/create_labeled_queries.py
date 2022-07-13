@@ -7,6 +7,8 @@ import csv
 
 # Useful if you want to perform stemming.
 import nltk
+nltk.download('punkt')
+nltk.download('stopwords')
 stemmer = nltk.stem.PorterStemmer()
 
 categories_file_name = r'/workspace/datasets/product_data/categories/categories_0001_abcat0010000_to_pcmcat99300050000.xml'
@@ -49,8 +51,37 @@ df = pd.read_csv(queries_file_name)[['category', 'query']]
 df = df[df['category'].isin(categories)]
 
 # IMPLEMENT ME: Convert queries to lowercase, and optionally implement other normalization, like stemming.
+def clean_text(text):
+    tokens = nltk.word_tokenize(text)
+    # Remove the punctuations
+    tokens = [word for word in tokens if word.isalpha()]
+    # Lower the tokens
+    tokens = [word.lower() for word in tokens]
+    # Remove stopwords
+    tokens = [word for word in tokens if not word in nltk.corpus.stopwords.words("english")]
+    # Stem
+    tokens = [stemmer.stem(word) for word in tokens]
+    processed_text = " ".join(tokens)
+    return processed_text
+
+print("cleaning queries")
+df["query"] = df["query"].apply(clean_text)
 
 # IMPLEMENT ME: Roll up categories to ancestors to satisfy the minimum number of queries per category.
+cat_sizes = df.groupby("category").size().sort_values()
+small_categs = cat_sizes.loc[cat_sizes < min_queries]
+new_categs = df["category"].copy()
+print("rolling up categories")
+while not small_categs.empty:
+    print("nb. of small categories: %d" % len(small_categs))
+    parents_df_small = parents_df[parents_df["category"].isin(small_categs.index)].copy()
+    replace_dict = {categ: parent for (categ, parent) in zip(parents_df_small["category"], parents_df_small["parent"])}
+    new_categs = new_categs.replace(replace_dict)
+    df_ = pd.DataFrame({"category": new_categs.tolist(), "query": df["query"].copy()})
+    cat_sizes = df_.groupby("category").size().sort_values()
+    small_categs = cat_sizes.loc[cat_sizes < min_queries]
+df = df_
+print("Total nb. of categories: %d" % len(df.category.unique()))
 
 # Create labels in fastText format.
 df['label'] = '__label__' + df['category']
@@ -58,4 +89,12 @@ df['label'] = '__label__' + df['category']
 # Output labeled query data as a space-separated file, making sure that every category is in the taxonomy.
 df = df[df['category'].isin(categories)]
 df['output'] = df['label'] + ' ' + df['query']
-df[['output']].to_csv(output_file_name, header=False, sep='|', escapechar='\\', quoting=csv.QUOTE_NONE, index=False)
+df[['output']].to_csv(output_file_name, header=False, sep='|', escapechar='\\', quoting=csv.QUOTE_NONE, index=False, na_rep=" ")
+
+
+
+
+
+
+
+
