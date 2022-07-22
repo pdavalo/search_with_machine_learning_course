@@ -1,5 +1,6 @@
 # A simple client for querying driven by user input on the command line.  Has hooks for the various
 # weeks (e.g. query understanding).  See the main section at the bottom of the file
+import opensearchpy
 from opensearchpy import OpenSearch
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -17,6 +18,7 @@ import nltk
 nltk.download('punkt')
 nltk.download('stopwords')
 stemmer = nltk.stem.PorterStemmer()
+from sentence_transformers import SentenceTransformer
 
 
 logger = logging.getLogger(__name__)
@@ -195,6 +197,22 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
         query_obj["_source"] = source
     return query_obj
 
+def create_query_vector(query, size=1):
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    embedding = model.encode([query])[0].tolist()
+    query_obj = {
+        "size": size,
+        "query": {
+            "knn": {
+                "embedding": {
+                    "vector": embedding,
+                    "k": size
+                }
+            }
+        }
+    }
+    return query_obj
+
 def clean_text(text):
     tokens = nltk.word_tokenize(text)
     # Remove the punctuations
@@ -208,9 +226,12 @@ def clean_text(text):
     processed_text = " ".join(tokens)
     return processed_text
 
-def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", synonyms=False, categories=[]):
-    query_obj = create_query(user_query, click_prior_query=None, filters=[], sort=sort, sortDir=sortDir, 
-                             source=["name", "shortDescription"], synonyms=synonyms, categories=categories)
+def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", synonyms=False, categories=[], vector=False):
+    if vector:
+        query_obj = create_query_vector(user_query)
+    else:
+        query_obj = create_query(user_query, click_prior_query=None, filters=[], sort=sort, sortDir=sortDir, 
+                                 source=["name", "shortDescription"], synonyms=synonyms, categories=categories)
     logging.info(query_obj)
     response = client.search(query_obj, index=index)
     if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
@@ -234,6 +255,7 @@ if __name__ == "__main__":
                          help='The OpenSearch admin.  If this is set, the program will prompt for password too. If not set, use default of admin/admin')
     general.add_argument("--synonyms", action="store_true", 
                          help='Use synonyms for the product name in the search query')
+    general.add_argument("-v", "--vector", action="store_true", help="Use vector search")
 
 
     args = parser.parse_args()
@@ -285,7 +307,7 @@ if __name__ == "__main__":
         cats = cats[:(i + 1)]
         cats = list((cat.replace("__label__", "") for cat in cats))
         
-        search(client=opensearch, user_query=query, index=index_name, synonyms=args.synonyms, categories=cats)
+        search(client=opensearch, user_query=query, index=index_name, synonyms=args.synonyms, categories=cats, vector=args.vector)
 
 
     

@@ -1,5 +1,6 @@
 {
   "settings": {
+    "index.knn": true,
     "analysis": {
       "analyzer": {
         "smarter_hyphens": {
@@ -40,6 +41,15 @@
             "type": "keyword",
             "ignore_above": 256
           }
+        }
+      },
+      "embedding": {
+        "type": "knn_vector",
+        "dimension": 384,
+        "method": {
+          "name": "hnsw",
+          "space_type": "cosinesimil",
+          "engine": "nmslib"
         }
       },
       "accessories": {
